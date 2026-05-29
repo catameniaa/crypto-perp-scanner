@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import time, sys, argparse, os, requests
+import time, sys, argparse
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import pandas as pd
@@ -55,13 +55,16 @@ def divergence(close, rsi_s, lb=14):
     c, r = close.iloc[-lb:], rsi_s.iloc[-lb:]
     pu = c.iloc[-1] > c.iloc[0]
     ru = r.iloc[-1] > r.iloc[0]
-    if not pu and ru: return 1  # Fiyat düşerken RSI yükseliyor (Bullish Div)
-    if pu and not ru: return -1 # Fiyat çıkarken RSI düşüyor (Bearish Div)
+    if not pu and ru: return 1  
+    if pu and not ru: return -1 
     return 0
 
-# Veri Çekme İşlemleri (Binance)
+# Veri Çekme İşlemleri (OKX)
 def get_ex():
-    return ccxt.binance({'options': {'defaultType': 'future'}, 'enableRateLimit': True})
+    return ccxt.okx({
+        'options': {'defaultType': 'swap'},
+        'enableRateLimit': True
+    })
 
 def fetch_ohlcv(ex, sym, tf='4h', lim=300):
     try:
@@ -91,20 +94,6 @@ def fetch_oi(ex, sym):
     except:
         return None
 
-def fetch_cvd_binance(sym):
-    # Binance public REST klines contains taker buy volume
-    # raw index 5: volume, index 9: taker buy base volume
-    try:
-        url = f"https://fapi.binance.com/fapi/v1/klines?symbol={sym.replace('/USDT:USDT', 'USDT')}&interval=4h&limit=14"
-        res = requests.get(url, timeout=5).json()
-        if type(res) is list and len(res) == 14:
-            vols = np.array([float(k[5]) for k in res])
-            taker_vols = np.array([float(k[9]) for k in res])
-            return pd.Series(taker_vols / np.where(vols==0, 1, vols))
-        return None
-    except:
-        return None
-
 def btc_regime(ex):
     df = fetch_ohlcv(ex, 'BTC/USDT:USDT', '1d', 220)
     if df is None or len(df) < 200:
@@ -123,7 +112,6 @@ def scan_coin(ex, sym, bull):
     st = supertrend(df)
     fund = fetch_funding(ex, sym)
     oi = fetch_oi(ex, sym)
-    cvd = fetch_cvd_binance(sym)
 
     lc, lr = close.iloc[-1], r14.iloc[-1]
     sc = {}
@@ -131,13 +119,7 @@ def scan_coin(ex, sym, bull):
     sc['trend'] = 1 if st.iloc[-1] == 1 else -1
     sc['rsi'] = 1 if lr < 30 else (-1 if lr > 70 else 0)
     sc['div'] = divergence(close, r14)
-
-    if cvd is not None:
-        cvd_slope = cvd.iloc[-1] - cvd.iloc[0]
-        pu = close.iloc[-1] > close.iloc[-14]
-        sc['cvd'] = 1 if (not pu and cvd_slope > 0) else (-1 if (pu and cvd_slope < 0) else 0)
-    else:
-        sc['cvd'] = 0
+    sc['cvd'] = 0 # OKX IP engeline takılmamak için bypass edildi
 
     if fund is not None:
         sc['fund'] = 1 if fund < -10 else (-1 if fund > 50 else 0)
@@ -162,26 +144,12 @@ def scan_coin(ex, sym, bull):
         'oi': round(oi, 2) if oi is not None else None,
     }
 
-def harvest_stats(ex, sym, days=30):
-    try:
-        history = ex.fetch_funding_rate_history(sym, limit=days * 3)
-        if not history: return None
-        arr = [float(h['fundingRate']) * 100 * 3 * 365 for h in history]
-        a = np.array(arr)
-        pp = float((a > 0).mean() * 100)
-        return {
-            'symbol': sym, 'mean': round(float(a.mean()), 1),
-            'std': round(float(a.std()), 1), 'pos_pct': round(pp, 0),
-            'score': round(pp - a.std() * 0.5, 1),
-        }
-    except:
-        return None
-
 # HTML ve Markdown Üreticileri
 def pills(sc):
     names = {'trend':'Trend', 'rsi':'RSI', 'div':'Div', 'cvd':'CVD', 'fund':'Fund', 'oi':'OI', 'bb':'BB'}
     out = ''
     for k, v in sc.items():
+        if k == 'cvd': continue # CVD gösterme
         cls = 'bull' if v > 0 else ('bear' if v < 0 else 'neu')
         arrow = '▲' if v > 0 else ('▼' if v < 0 else '–')
         out += f'<span class="p {cls}">{arrow}{names.get(k, k)}</span>'
@@ -194,15 +162,19 @@ def trows(items):
         nc = 'bull' if r['net'] > 0 else 'bear'
         fn = f"{r['funding']:+.1f}%" if r['funding'] is not None else '-'
         oi = f"{r['oi']:+.1f}%" if r['oi'] is not None else '-'
-        sym = r['symbol'].replace('/USDT:USDT', '')
-        rows += f"<tr><td><b><a href='https://www.binance.com/en/futures/{sym}' target='_blank' style='color:inherit;text-decoration:none'>{sym}</a></b></td><td>{r['close']}</td><td>{r['rsi']}</td><td class='{nc}'><b>{r['raw_net']:+d}</b></td><td class='{nc}'>{r['net']:+.1f}</td><td>{fn}</td><td>{oi}</td><td>{pills(r['scores'])}</td></tr>"
+        
+        # OKX formatında temizle ve link oluştur
+        clean_sym = r['symbol'].replace('/USDT:USDT', '')
+        okx_link_sym = clean_sym.lower() + "-usdt"
+        
+        rows += f"<tr><td><b><a href='https://www.okx.com/trade-swap/{okx_link_sym}' target='_blank' style='color:inherit;text-decoration:none'>{clean_sym}</a></b></td><td>{r['close']}</td><td>{r['rsi']}</td><td class='{nc}'><b>{r['raw_net']:+d}</b></td><td class='{nc}'>{r['net']:+.1f}</td><td>{fn}</td><td>{oi}</td><td>{pills(r['scores'])}</td></tr>"
     return rows
 
 def generate_md(sl, ss, ts):
-    md = f"### Sinyal Özeti ({ts})\n\n**UYARI:** Bu araç bir KARAR DESTEK ARACIDIR. Backtest 365 günlük Binance perpetual verisinde Sharpe -0.7 ile negatif sonuç verdi. Sinyaller tek başına alfa garantisi vermez.\n\n"
+    md = f"### Sinyal Özeti ({ts})\n\n**UYARI:** Bu araç bir KARAR DESTEK ARACIDIR. Backtest sonuçları negatif çıkmıştır. Sinyaller tek başına alfa garantisi vermez.\n\n"
     md += f"**Güçlü Long Sinyalleri:** {len(sl)} adet\n"
     md += f"**Güçlü Short Sinyalleri:** {len(ss)} adet\n\n"
-    md += "Lütfen paper trade defteri (Notion/Excel) tutun, 5-10 gün sonra fiyatı kontrol edin. Hit-rate %55+ değilse otomatik emir bağlamayın."
+    md += "Lütfen paper trade defteri (Notion/Excel) tutun, hit-rate ölçmeden gerçek işlem açmayın."
     (OUT_DIR / "dashboard_summary.md").write_text(md, encoding='utf-8')
 
 def write_dashboard_html(sl, ss, rl, rs, hv, regime, ts):
@@ -212,7 +184,7 @@ def write_dashboard_html(sl, ss, rl, rs, hv, regime, ts):
     rlbl = 'BULL' if bull else 'BEAR'
     rcls = 'bull' if bull else 'bear'
 
-    html = f"""<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="600"><title>Binance Perp Dashboard</title><style>
+    html = f"""<!DOCTYPE html><html lang="tr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="refresh" content="600"><title>OKX Perp Dashboard</title><style>
     *{{box-sizing:border-box;margin:0;padding:0}}:root{{--bg:#0d1117;--card:#161b22;--border:#30363d;--green:#3fb950;--red:#f85149;--text:#c9d1d9;--muted:#8b949e}}
     body{{background:var(--bg);color:var(--text);font-family:-apple-system,sans-serif;font-size:14px;padding:12px}}
     h1{{font-size:1.1em;margin-bottom:12px}} h2{{font-size:.8em;color:var(--muted);text-transform:uppercase;margin:14px 0 6px}}
@@ -228,16 +200,16 @@ def write_dashboard_html(sl, ss, rl, rs, hv, regime, ts):
     .warn{{background:#272115;border:1px solid #b08000;border-radius:8px;padding:10px;margin-bottom:12px;font-size:.8em;color:#d29922;line-height:1.5}}
     .btn{{background:#238636;color:#fff;border:none;border-radius:6px;padding:11px;font-size:.9em;cursor:pointer;width:100%;margin-bottom:12px}}
     @media(max-width:500px){{th:nth-child(n+6),td:nth-child(n+6){{display:none}}}}</style></head><body>
-    <h1>Binance Perp Sinyal Motoru v2</h1>
-    <div class="warn"><b>DİKKAT:</b> Backtest 365 günlük veride Sharpe -0.7 verdi. Bu sistem kar garantisi vermez. Paper trade (sanal bakiye) tutun, 30 işlem sonrası hit-rate %55'in altındaysa gerçek işlem açmayın! Trade botu değil, radar aracıdır.</div>
+    <h1>OKX Perp Sinyal Motoru v2</h1>
+    <div class="warn"><b>DİKKAT:</b> Backtest 365 günlük veride eksi sonuç vermiştir. Kar garantisi vermez. Paper trade tutun, 30 işlem sonrası hit-rate %55'in altındaysa gerçek işlem açmayın! Trade botu değil, radar aracıdır.</div>
     <div class="kpis"><div class="kpi"><div class="l">BTC Fiyat</div><div class="v">{bp}</div></div><div class="kpi"><div class="l">EMA200</div><div class="v">{ep}</div></div><div class="kpi"><div class="l">Rejim</div><div class="v {rcls}">{rlbl}</div></div><div class="kpi"><div class="l">Son Tarama</div><div class="v" style="font-size:.7em">{ts}</div></div></div>
-    <button class="btn" onclick="window.location.reload()">Verileri Yenile (Browser Cache Temizle)</button>
-    <p style="color:var(--muted);font-size:.7em;margin-bottom:10px">Not: Arka planda GitHub Actions her 15 dakikada bir verileri günceller. Manuel tetikleme için GitHub reponuzdan Actions tabını kullanın.</p>
+    <button class="btn" onclick="window.location.href = window.location.pathname + '?v=' + new Date().getTime();">Verileri Yenile (Browser Cache Temizle)</button>
+    <p style="color:var(--muted);font-size:.7em;margin-bottom:10px">Not: Arka planda GitHub Actions her 15 dakikada bir verileri OKX üzerinden günceller.</p>
     <h2>Güçlü Long (Net &gt;= {STRONG})</h2><table><tr><th>Sembol</th><th>Fiyat</th><th>RSI</th><th>Ham</th><th>Net</th><th>Fund</th><th>OI</th><th>Sinyaller</th></tr>{trows(sl)}</table>
     <h2>Güçlü Short (Net &lt;= -{STRONG})</h2><table><tr><th>Sembol</th><th>Fiyat</th><th>RSI</th><th>Ham</th><th>Net</th><th>Fund</th><th>OI</th><th>Sinyaller</th></tr>{trows(ss)}</table>
     <h2>Ham Long</h2><table><tr><th>Sembol</th><th>Fiyat</th><th>RSI</th><th>Ham</th><th>Net</th><th>Fund</th><th>OI</th><th>Sinyaller</th></tr>{trows(rl)}</table>
     <h2>Ham Short</h2><table><tr><th>Sembol</th><th>Fiyat</th><th>RSI</th><th>Ham</th><th>Net</th><th>Fund</th><th>OI</th><th>Sinyaller</th></tr>{trows(rs)}</table>
-    <br><br><p style="text-align:center;color:var(--muted);font-size:0.8em;">Makine öğrenimi/Algoritmik radar testi</p>
+    <br><br><p style="text-align:center;color:var(--muted);font-size:0.8em;">Makine öğrenimi/Algoritmik radar testi - OKX Altyapısı</p>
     </body></html>"""
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     (OUT_DIR / "index.html").write_text(html, encoding='utf-8')
@@ -251,13 +223,13 @@ def main():
     regime = btc_regime(ex)
     
     try:
-        markets = ex.load_markets()
         tickers = ex.fetch_tickers()
         
         def _vol(t): return t.get('quoteVolume') or t.get('baseVolume') or 0
         
+        # OKX formatı '/USDT:USDT' üzerinden filtreleme
         syms = sorted(
-            [k for k in tickers.keys() if k.endswith('USDT') and markets[k]['swap']],
+            [k for k in tickers.keys() if k.endswith(':USDT')],
             key=lambda s: _vol(tickers[s]),
             reverse=True
         )[:args.limit]
@@ -269,14 +241,14 @@ def main():
     for sym in syms:
         r = scan_coin(ex, sym, regime['bull'])
         if r: results.append(r)
-        time.sleep(0.1)  # Rate limit koruması
+        time.sleep(0.15)  # Rate limit koruması
 
     sl = sorted([r for r in results if r['net'] >= STRONG], key=lambda x: -x['net'])
     ss = sorted([r for r in results if r['net'] <= -STRONG], key=lambda x: x['net'])
     rl = sorted([r for r in results if r['raw_net'] >= STRONG], key=lambda x: -x['raw_net'])
     rs = sorted([r for r in results if r['raw_net'] <= -STRONG], key=lambda x: x['raw_net'])
 
-    hv = [] # Funding Harvest opsiyonel olarak eklenebilir.
+    hv = [] 
 
     now_tr = datetime.now(timezone.utc) + timedelta(hours=3)
     ts = now_tr.strftime('%d.%m.%Y %H:%M TSİ')
