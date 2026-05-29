@@ -1,0 +1,35 @@
+name: Crypto Signal Bot Scanner
+
+on:
+  schedule:
+    - cron: '*/15 * * * *' # Her 15 dakikada bir çalışır
+  workflow_dispatch: # GitHub üzerinden manuel tetikleme butonu
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Scanner Engine
+        run: python backtest_perp_scanner.py --limit 100
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./public
+          commit_message: "Automated scan update"
