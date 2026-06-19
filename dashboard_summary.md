@@ -1,4 +1,4 @@
-### Sinyal Özeti (19.06.2026 10:36 TSİ)
+### Sinyal Özeti (19.06.2026 14:54 TSİ)
 
 **UYARI:** Bu araç bir KARAR DESTEK ARACIDIR. Backtest sonuçları negatif çıkmıştır. Sinyaller tek başına alfa garantisi vermez.
 
