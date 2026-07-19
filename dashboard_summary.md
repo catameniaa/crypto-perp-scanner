@@ -1,8 +1,8 @@
-### Sinyal Özeti (19.07.2026 13:14 TSİ)
+### Sinyal Özeti (19.07.2026 14:29 TSİ)
 
 **UYARI:** Bu araç bir KARAR DESTEK ARACIDIR. Backtest sonuçları negatif çıkmıştır. Sinyaller tek başına alfa garantisi vermez.
 
 **Güçlü Long Sinyalleri:** 0 adet
-**Güçlü Short Sinyalleri:** 0 adet
+**Güçlü Short Sinyalleri:** 1 adet
 
 Lütfen paper trade defteri (Notion/Excel) tutun, hit-rate ölçmeden gerçek işlem açmayın.
