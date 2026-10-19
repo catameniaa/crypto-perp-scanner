@@ -1,8 +1,8 @@
-### Sinyal Özeti (19.10.2026 16:04 TSİ)
+### Sinyal Özeti (19.10.2026 22:18 TSİ)
 
 **UYARI:** Bu araç bir KARAR DESTEK ARACIDIR. Backtest sonuçları negatif çıkmıştır. Sinyaller tek başına alfa garantisi vermez.
 
 **Güçlü Long Sinyalleri:** 5 adet
-**Güçlü Short Sinyalleri:** 0 adet
+**Güçlü Short Sinyalleri:** 1 adet
 
 Lütfen paper trade defteri (Notion/Excel) tutun, hit-rate ölçmeden gerçek işlem açmayın.
